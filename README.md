@@ -58,10 +58,9 @@ docker build -t vibe-scraper .
 docker run --name vibe-scraper \
   -v "$(pwd)/crawler_data:/app/data_to_upload" \
   vibe-scraper \
-  --websites https://alia.ge \
+  --websites https://alia.ge https://ambebi.ge https://interpressnews.ge https://palitravideo.ge https://primetime.ge \
   --max-pages 100 \
   --max-depth 3 \
-  --bucket second-hapttic-bucket
 
 ```
 
