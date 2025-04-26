@@ -1,6 +1,7 @@
 from crawl_and_upload import crawler_func
 import argparse
 import sys
+import time
 
 # Default list of websites to crawl
 default_websites = [
@@ -18,8 +19,10 @@ def parse_args():
     parser.add_argument('--max-depth', '-d', type=int, default=5, help='Maximum crawl depth')
     parser.add_argument('--no-remove-local', action='store_false', dest='remove_local', 
                         help='Do not remove local files after upload')
-    parser.add_argument('--bucket', '-b', type=str, default="second-hapttic-bucket", 
+    parser.add_argument('--bucket', '-b', type=str, default="first-hapttic-bucket", 
                         help='S3 bucket name')
+    parser.add_argument('--no-loop', action='store_true', help='Run once without continuous looping')
+    parser.add_argument('--wait-time', type=int, default=3600, help='Wait time between crawls in seconds (default: 1 hour)')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -28,30 +31,47 @@ if __name__ == "__main__":
     # Use provided websites or fall back to defaults
     websites = args.websites if args.websites else default_websites
     
-    print(f"Starting crawl for {len(websites)} websites:")
-    for website in websites:
-        print(f"  - {website}")
+    def run_crawl():
+        print(f"Starting crawl for {len(websites)} websites:")
+        for website in websites:
+            print(f"  - {website}")
+        
+        # Run a single crawl for all websites
+        result = crawler_func(
+            websites=websites,
+            max_pages=args.max_pages,
+            max_depth=args.max_depth,
+            remove_local_files=args.remove_local,
+            bucket=args.bucket
+        )
+        
+        # Print summary
+        print("\nCrawl and upload summary:")
+        print(f"Crawled {result['pages_crawled']} pages from {len(result['websites'])} websites")
+        
+        if result['success']:
+            print(f"Uploaded {result['files_uploaded']} files ({result['bytes_uploaded'] / (1024*1024):.2f} MB)")
+            print(f"Skipped {result['files_skipped']} existing files")
+            print(f"Files stored in S3 bucket: {result['bucket']} with prefixes:")
+            for prefix in result['s3_prefixes']:
+                print(f"  - {prefix}")
+            if result.get('local_files_removed', False):
+                print("Local files have been removed.")
+        else:
+            print(f"Error: {result.get('error', 'Unknown error')}") 
+        
+        return result
     
-    # Run a single crawl for all websites
-    result = crawler_func(
-        websites=websites,
-        max_pages=args.max_pages,
-        max_depth=args.max_depth,
-        remove_local_files=args.remove_local,
-        bucket=args.bucket
-    )
-    
-    # Print summary
-    print("\nCrawl and upload summary:")
-    print(f"Crawled {result['pages_crawled']} pages from {len(result['websites'])} websites")
-    
-    if result['success']:
-        print(f"Uploaded {result['files_uploaded']} files ({result['bytes_uploaded'] / (1024*1024):.2f} MB)")
-        print(f"Skipped {result['files_skipped']} existing files")
-        print(f"Files stored in S3 bucket: {result['bucket']} with prefixes:")
-        for prefix in result['s3_prefixes']:
-            print(f"  - {prefix}")
-        if result.get('local_files_removed', False):
-            print("Local files have been removed.")
+    # Run once or in continuous loop
+    if args.no_loop:
+        run_crawl()
     else:
-        print(f"Error: {result.get('error', 'Unknown error')}") 
+        try:
+            while True:
+                run_crawl()
+                wait_time = args.wait_time
+                print(f"\nWaiting {wait_time} seconds before next crawl...")
+                time.sleep(wait_time)
+        except KeyboardInterrupt:
+            print("\nCrawl process terminated by user")
+            sys.exit(0) 
