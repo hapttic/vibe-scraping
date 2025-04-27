@@ -3,19 +3,13 @@ import argparse
 import sys
 import time
 
-# Default list of websites to crawl
-default_websites = [
-    "https://www.ambebi.ge/",
-    "https://www.alia.ge/",
-    "https://primetime.ge/",
-    "https://www.palitravideo.ge/",
-    "https://www.interpressnews.ge/ka/"
-]
+# Default website to crawl
+default_website = "https://www.ambebi.ge/"
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Web crawler with S3 upload')
-    parser.add_argument('--websites', '-w', nargs='+', help='List of websites to crawl', default=None)
-    parser.add_argument('--max-pages', '-p', type=int, default=5000, help='Maximum number of pages to crawl')
+    parser.add_argument('--website', '-w', type=str, help='Website URL to crawl', default=None)
+    parser.add_argument('--max-pages', '-p', type=int, default=500, help='Maximum number of pages to crawl')
     parser.add_argument('--max-depth', '-d', type=int, default=5, help='Maximum crawl depth')
     parser.add_argument('--no-remove-local', action='store_false', dest='remove_local', 
                         help='Do not remove local files after upload')
@@ -28,17 +22,15 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     
-    # Use provided websites or fall back to defaults
-    websites = args.websites if args.websites else default_websites
+    # Use provided website or fall back to default
+    website = args.website if args.website else default_website
     
     def run_crawl():
-        print(f"Starting crawl for {len(websites)} websites:")
-        for website in websites:
-            print(f"  - {website}")
+        print(f"Starting crawl for website: {website}")
         
-        # Run a single crawl for all websites
+        # Run a single crawl for the website
         result = crawler_func(
-            websites=websites,
+            websites=website,  # crawler_func already handles single string or list
             max_pages=args.max_pages,
             max_depth=args.max_depth,
             remove_local_files=args.remove_local,
@@ -47,7 +39,7 @@ if __name__ == "__main__":
         
         # Print summary
         print("\nCrawl and upload summary:")
-        print(f"Crawled {result['pages_crawled']} pages from {len(result['websites'])} websites")
+        print(f"Crawled {result['pages_crawled']} pages from {website}")
         
         if result['success']:
             print(f"Uploaded {result['files_uploaded']} files ({result['bytes_uploaded'] / (1024*1024):.2f} MB)")
