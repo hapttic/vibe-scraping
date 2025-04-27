@@ -5,18 +5,23 @@ import time
 import subprocess
 import os
 import signal
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 # Default website to crawl
 default_website = "https://www.ambebi.ge/"
 
-# Flag to track if we need to exit
-exit_flag = False
-
 # Handle SIGTERM signal (Docker stop)
 def handle_sigterm(signum, frame):
-    global exit_flag
-    print("\nReceived SIGTERM signal. Shutting down gracefully...")
-    exit_flag = True
+    logger.info("Received SIGTERM signal. Shutting down gracefully...")
+    sys.exit(0)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Web crawler with S3 upload')
@@ -61,51 +66,55 @@ def run_single_crawl(website, max_pages, max_depth, remove_local, bucket):
     
     return result
 
-def wait_for_next_crawl(wait_time):
-    """Wait for the specified time before next crawl, with clean interruption handling"""
-    global exit_flag
-    print(f"\nWaiting {wait_time} seconds before next crawl...")
-    
-    # Wait in smaller chunks to allow for clean interruption
-    chunks = 10  # Check for exit flag every few seconds
-    chunk_time = max(1, wait_time // chunks)
-    remaining = wait_time
-    
-    while remaining > 0 and not exit_flag:
-        try:
-            time_to_sleep = min(chunk_time, remaining)
-            time.sleep(time_to_sleep)
-            remaining -= time_to_sleep
-        except KeyboardInterrupt:
-            print("\nCrawl process terminated by user during wait period")
-            return False
-    
-    return not exit_flag  # Return True if we should continue, False if we should exit
-
-# For backward compatibility
+# The proper restart function that works with Scrapy's reactor
 def restart_script_for_next_crawl(args_dict, wait_time):
-    """Legacy function kept for backward compatibility"""
-    print("WARNING: Using restart mechanism is deprecated, using internal loop instead")
-    if wait_for_next_crawl(wait_time):
-        # We'll handle the loop in the main function now
-        return True
-    else:
+    """Wait for the specified time, then restart the script with a new process"""
+    logger.info(f"Waiting {wait_time} seconds before next crawl...")
+    
+    try:
+        # Wait for specified time, but check every few seconds if we should exit
+        chunk_size = 5  # Check every 5 seconds
+        for _ in range(0, wait_time, chunk_size):
+            time.sleep(min(chunk_size, wait_time - _))
+            # Check if we should continue (could add logic to exit early)
+    except KeyboardInterrupt:
+        logger.info("Crawl process terminated by user during wait period")
         sys.exit(0)
-
-# Solution 2: Alternative function to use if the process restart isn't desirable
-def run_as_separate_process(website, max_pages, max_depth, remove_local, bucket):
-    """Run the crawler as a separate process"""
-    import multiprocessing
     
-    # Create a new process for the crawler
-    p = multiprocessing.Process(
-        target=run_single_crawl, 
-        args=(website, max_pages, max_depth, remove_local, bucket)
+    # Get the current script path
+    script_path = os.path.abspath(sys.argv[0])
+    logger.info(f"Will restart using script path: {script_path}")
+    
+    # Build arguments list from the original arguments
+    new_args = [sys.executable, script_path]
+    for arg, value in args_dict.items():
+        if arg == 'no_loop' or arg == 'remove_local':
+            # Skip these or handle differently
+            continue
+        if value is not None:
+            new_args.extend([f'--{arg.replace("_", "-")}', str(value)])
+    
+    # Add special flags
+    if not args_dict.get('remove_local', True):
+        new_args.append('--no-remove-local')
+    
+    # Always run with no_loop=False for the next iteration
+    
+    # Execute the new process with the same arguments
+    logger.info(f"Restarting crawler with command: {' '.join(new_args)}")
+    
+    # Start the new process, ensuring it doesn't inherit file descriptors
+    # that might cause issues with Docker
+    process = subprocess.Popen(
+        new_args,
+        close_fds=True,
+        stdout=sys.stdout,
+        stderr=sys.stderr
     )
-    p.start()
-    p.join()  # Wait for the process to finish
     
-    return {"success": p.exitcode == 0}
+    # Log that we're exiting
+    logger.info("Crawler parent process exiting after starting child...")
+    sys.exit(0)
 
 if __name__ == "__main__":
     # Register signal handler for graceful shutdown
@@ -121,16 +130,15 @@ if __name__ == "__main__":
         run_single_crawl(website, args.max_pages, args.max_depth, args.remove_local, args.bucket)
     else:
         try:
-            while not exit_flag:
-                # Run a crawl
-                run_single_crawl(website, args.max_pages, args.max_depth, args.remove_local, args.bucket)
-                
-                # Wait for the next crawl, exit if interrupted
-                if not wait_for_next_crawl(args.wait_time):
-                    break
-                
+            # Run a single crawl
+            run_single_crawl(website, args.max_pages, args.max_depth, args.remove_local, args.bucket)
+            
+            # Convert args to dict for easier handling in restart function
+            args_dict = vars(args)
+            
+            # Restart the script for the next crawl
+            restart_script_for_next_crawl(args_dict, args.wait_time)
+            
         except KeyboardInterrupt:
-            print("\nCrawl process terminated by user")
-    
-    print("Crawler process exiting...")
-    sys.exit(0)
+            logger.info("Crawl process terminated by user")
+            sys.exit(0)
