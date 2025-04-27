@@ -22,4 +22,4 @@ ENV AWS_REGION="us-east-1"
 ENTRYPOINT ["python", "run/run.py"]
 
 # Default command can be overridden at runtime
-CMD ["--websites", "https://www.example.com"] 
+CMD ["--website", "https://www.ambebi.ge/"] 
